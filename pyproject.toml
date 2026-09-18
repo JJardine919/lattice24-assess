@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lattice24-assess"
+version = "0.1.0"
+description = "Measure how much of a cluster's job energy sits in timed-out jobs, and how well they can be identified before they start. Runs offline on your own scheduler history."
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache-2.0"}
+dependencies = ["numpy>=1.21", "scikit-learn>=1.0"]
+
+[project.scripts]
+lattice24-assess = "lattice24_assess.cli:main"
+
+[tool.setuptools]
+packages = ["lattice24_assess"]
