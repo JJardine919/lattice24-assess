@@ -16,11 +16,27 @@ published reference cluster those jobs carried **46% of job energy**.
 
 ## Install
 
+Python 3.9+. Depends only on `numpy` and `scikit-learn`.
+
+Most current Linux distributions refuse a system-wide `pip install`
+(PEP 668), so use a virtual environment:
+
 ```bash
-pip install lattice24-assess
+git clone https://github.com/JJardine919/lattice24-assess
+cd lattice24-assess
+python3 -m venv .venv
+.venv/bin/pip install -e .
 ```
 
-Dependencies: `numpy`, `scikit-learn`. Python 3.9+.
+Or, if your site already provides numpy and scikit-learn as modules, skip the
+install entirely and run it from the clone:
+
+```bash
+python3 -m lattice24_assess.cli export.psv --out ./report
+```
+
+`pipx install git+https://github.com/JJardine919/lattice24-assess` also works
+if you have pipx.
 
 ## Use
 
@@ -29,7 +45,7 @@ sacct --allocations --parsable2 \
       --starttime=$(date -d '12 months ago' +%F) \
       -o User,End,Timelimit,Elapsed,State,ConsumedEnergyRaw > export.psv
 
-lattice24-assess export.psv --site "Our Cluster" --out ./report
+.venv/bin/lattice24-assess export.psv --site "Our Cluster" --out ./report
 ```
 
 Writes two files: an HTML report you can read in a browser, and a JSON summary.
