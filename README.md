@@ -10,9 +10,11 @@ whole method.
 
 ## Why this exists
 
-A job that hits its wall-clock limit runs for the full time requested and then
-produces nothing. Your scheduler already recorded every one of them. On the
-published reference cluster those jobs carried **46% of job energy**.
+A job that hits its wall-clock limit runs for the full time requested. Some of
+those did useful work on purpose — they checkpoint, time out and resubmit — and
+the rest end without a usable result. Your scheduler already recorded every one
+of them. On the published reference cluster timed-out jobs carried **46% of job
+energy**, before separating out checkpoint-restart chains.
 
 ## Install
 
@@ -93,6 +95,23 @@ labels scores meaningfully above chance, the report says the run is invalid
 and prints no headline figure.
 
 Method and reference data: <https://doi.org/10.5281/zenodo.21913139>
+
+## Checkpoint-restart chains
+
+Some timeouts are intentional: the job checkpoints, runs to its limit and is
+resubmitted (by hand or with `--dependency=afterany`). That work is not waste,
+so the report shows timeout energy **both with and without** likely restart
+chains.
+
+A timeout is marked a likely restart link when the same user starts another
+job with the **same time limit** within `--restart-gap` hours (default 2) of
+the timeout. It is a proxy — job names would make it sharper and are never
+read — so it can miss chains that change their limit or queue longer, and can
+catch unrelated back-to-back jobs. Read the two figures as a range. On
+synthetic data with planted chains it recovered every planted link with no
+false matches; on data with no chains it marked about 1.5% of timeouts.
+
+Thanks to Christopher Samuel for the correction on slurm-users.
 
 ## When it refuses
 

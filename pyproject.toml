@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lattice24-assess"
-version = "0.1.0"
+version = "0.2.0"
 description = "Measure how much of a cluster's job energy sits in timed-out jobs, and how well they can be identified before they start. Runs offline on your own scheduler history."
 readme = "README.md"
 requires-python = ">=3.9"

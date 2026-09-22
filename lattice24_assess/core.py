@@ -17,7 +17,8 @@ import re
 import secrets
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
+from bisect import bisect_left
 
 import numpy as np
 
@@ -30,6 +31,14 @@ PERCENTILES = (50, 75, 80, 90, 95)
 MIN_MONTHS = 6
 MIN_WINDOWS = 50_000
 MIN_TIMEOUTS = 200
+
+# Checkpoint-restart heuristic. A TIMEOUT is marked "likely restart chain" when
+# the same user starts another job with the SAME time limit within this many
+# seconds of the timeout. Sites that checkpoint and resubmit (or use
+# --dependency=afterany chains) look exactly like that. It is a proxy: the job
+# name, which would make it sharper, is deliberately never parsed.
+RESTART_GAP_S = 2 * 3600
+RESTART_EARLY_S = 60      # tolerate a resubmission that starts just before the end stamp
 
 # Columns we need. Everything else in the export is ignored and never parsed.
 REQUIRED = ("user", "end", "timelimit", "elapsed", "state")
@@ -97,6 +106,9 @@ class Job:
     ratio: float          # elapsed / timelimit
     timed_out: bool
     kwh: float | None     # energy of THIS job, if the site reports it
+    limit: float = 0.0    # requested wall clock, seconds
+    start: datetime | None = None   # end - elapsed
+    restart_likely: bool = False    # set by mark_restart_chains
 
 
 def _energy_kwh(row: dict) -> float | None:
@@ -209,10 +221,47 @@ def read_records(path: str, delimiter: str | None = None) -> tuple[list[Job], di
                 ratio=used / limit,
                 timed_out=(state == "TIMEOUT"),
                 kwh=kwh,
+                limit=limit,
+                start=end - timedelta(seconds=used),
             ))
 
     jobs.sort(key=lambda j: j.end)
     return jobs, stats
+
+
+def mark_restart_chains(jobs: list[Job], gap_s: float = RESTART_GAP_S) -> dict:
+    """
+    Mark TIMEOUT jobs that look like one link of a checkpoint-restart chain:
+    the same user starts a job with the same time limit within gap_s seconds
+    of this job's end. Those timeouts are often intentional and did useful
+    work, so the report shows timeout energy with and without them.
+
+    Returns counts for the summary. Uses only fields already parsed.
+    """
+    by_user: dict[str, list[Job]] = defaultdict(list)
+    for j in jobs:
+        if j.start is not None:
+            by_user[j.user].append(j)
+    marked = 0
+    timeouts = 0
+    for seq in by_user.values():
+        seq.sort(key=lambda j: j.start)
+        starts = [j.start.timestamp() for j in seq]
+        for j in seq:
+            if not j.timed_out:
+                continue
+            timeouts += 1
+            e = j.end.timestamp()
+            i = bisect_left(starts, e - RESTART_EARLY_S)
+            while i < len(seq) and starts[i] <= e + gap_s:
+                k = seq[i]
+                if k is not j and abs(k.limit - j.limit) <= 1.0:
+                    j.restart_likely = True
+                    marked += 1
+                    break
+                i += 1
+    return {"restart_gap_hours": gap_s / 3600.0, "timeouts_seen": timeouts,
+            "timeouts_restart_likely": marked}
 
 
 # --------------------------------------------------------------------------
@@ -226,6 +275,7 @@ class Windows:
     kwh: np.ndarray          # (n,) energy of the predicted job, 0 where unknown
     kwh_known: np.ndarray    # (n,) bool
     month: np.ndarray        # (n,) 'YYYY-MM' of the predicted job
+    restart: np.ndarray = None  # (n,) bool: predicted job is a likely restart-chain timeout
     months: list[str] = field(default_factory=list)
 
 
@@ -241,7 +291,7 @@ def build_windows(jobs: list[Job]) -> Windows:
     for j in jobs:
         by_user[j.user].append(j)
 
-    F, y, kwh, known, month = [], [], [], [], []
+    F, y, kwh, known, month, restart = [], [], [], [], [], []
     for _user, seq in by_user.items():
         if len(seq) < MIN_HISTORY:
             continue
@@ -259,6 +309,7 @@ def build_windows(jobs: list[Job]) -> Windows:
             kwh.append(target.kwh if target.kwh is not None else 0.0)
             known.append(target.kwh is not None)
             month.append(target.end.strftime("%Y-%m"))
+            restart.append(bool(target.timed_out and target.restart_likely))
 
     if not F:
         raise Refusal(
@@ -272,6 +323,7 @@ def build_windows(jobs: list[Job]) -> Windows:
         kwh=np.asarray(kwh, dtype=np.float64),
         kwh_known=np.asarray(known, dtype=bool),
         month=np.asarray(month),
+        restart=np.asarray(restart, dtype=bool),
     )
     w.months = sorted(set(w.month.tolist()))
     return w
@@ -388,7 +440,9 @@ def forward_chain(w: Windows, seed: int = 42) -> dict:
 
     kwh = w.kwh[idx]
     known = w.kwh_known[idx]
+    rst = w.restart[idx]
     kwh_timeout_total = float(kwh[ys & known].sum())
+    kwh_restart = float(kwh[ys & rst & known].sum())
     kwh_total = float(kwh[known].sum())
 
     for p in PERCENTILES:
@@ -401,6 +455,7 @@ def forward_chain(w: Windows, seed: int = 42) -> dict:
             "recall": tp / max(int(ys.sum()), 1),
             "false_flag": fp / max(int((~ys).sum()), 1),
             "energy_at_stake_kwh": caught,
+            "energy_at_stake_excl_restart_kwh": float(kwh[flag & ys & ~rst & known].sum()),
         }
 
     spread = {}
@@ -422,6 +477,10 @@ def forward_chain(w: Windows, seed: int = 42) -> dict:
             "timeout_kwh": kwh_timeout_total,
             "total_kwh": kwh_total,
             "timeout_share": (kwh_timeout_total / kwh_total) if kwh_total > 0 else None,
+            "restart_kwh": kwh_restart,
+            "timeout_kwh_excl_restart": kwh_timeout_total - kwh_restart,
+            "timeout_share_excl_restart": ((kwh_timeout_total - kwh_restart) / kwh_total) if kwh_total > 0 else None,
+            "restart_share_of_timeouts": (int((ys & rst).sum()) / max(int(ys.sum()), 1)),
             "coverage": float(known.mean()),
         },
     }

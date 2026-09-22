@@ -99,6 +99,7 @@ def render_html(summary: dict) -> str:
         t = pooled["thresholds"][str(p)] if str(p) in pooled["thresholds"] else pooled["thresholds"][p]
         s = spread[str(p)] if str(p) in spread else spread[p]
         stake = t["energy_at_stake_kwh"]
+        stake_ex = t.get("energy_at_stake_excl_restart_kwh", stake)
         rows.append(
             f"<tr{' class=rec' if p == 80 else ''}>"
             f"<td>{p}th</td>"
@@ -106,7 +107,7 @@ def render_html(summary: dict) -> str:
             f"<td>{_pct(t['false_flag'])}</td>"
             f"<td>{_pct(s['recall_mean'])} ± {100*s['recall_sd']:.1f}</td>"
             f"<td>{_pct(s['false_flag_mean'])} ± {100*s['false_flag_sd']:.1f}</td>"
-            f"<td>{stake:,.0f} kWh</td></tr>"
+            f"<td>{stake:,.0f} kWh</td><td>{stake_ex:,.0f} kWh</td></tr>"
         )
 
     if not ctl.get("passed"):
@@ -124,7 +125,8 @@ def render_html(summary: dict) -> str:
         share = energy["timeout_share"]
         share_txt = (
             f"Timed-out jobs carry <b>{_pct(share)}</b> of the job energy this "
-            "export reports."
+            f"export reports — <b>{_pct(energy.get('timeout_share_excl_restart'))}</b> "
+            "once likely checkpoint-restart chains are set aside."
             if share is not None else
             "Your export carried no energy column, so the share of energy in "
             "timed-out jobs could not be measured here."
@@ -176,8 +178,10 @@ Nothing in this report left your machine.</p>
 {headline}
 
 <h2>What this is</h2>
-<p>Jobs that hit their wall-clock limit run to the full time requested and then
-produce nothing. Your scheduler already recorded every one of them. This report
+<p>Jobs that hit their wall-clock limit run to the full time requested. Some
+did useful work on purpose — they checkpoint, time out, and resubmit — and the
+rest end without a usable result. Your scheduler already recorded every one of
+them. This report
 fits a model to <em>your</em> history — four summary statistics of each user's
 previous {24} wall-clock ratios — and reports how well it identifies those jobs
 <em>before they start</em>.</p>
@@ -185,12 +189,25 @@ previous {24} wall-clock ratios — and reports how well it identifies those job
 <h2>Your numbers</h2>
 <table>
 <thead><tr><th>Threshold</th><th>Recall (pooled)</th><th>False flags (pooled)</th>
-<th>Recall per split</th><th>False flags per split</th><th>Energy at stake</th></tr></thead>
+<th>Recall per split</th><th>False flags per split</th><th>Energy at stake</th>
+<th>At stake, excl. restart chains</th></tr></thead>
 <tbody>{''.join(rows)}</tbody></table>
 <p class="note">Fit on history, applied to the following month, across
 {fc['n_splits']} forward-chained splits — never in reverse. Pooled figures
 combine all splits; the per-split columns show how much that varies month to
 month, which is the number to plan against.</p>
+
+<h2>Checkpoint-restart chains</h2>
+<p>A job that checkpoints, runs to its limit and resubmits has done useful
+work, so its energy is not waste. The export has no field that says so
+directly, and job names are never read, so this report uses a proxy: a timeout
+is marked a <em>likely restart link</em> when the same user starts another job
+with the same time limit within {html.escape(str(inp.get('restart_gap_hours', 2)))} hours
+(<code>--restart-gap</code>). {_pct(energy.get('restart_share_of_timeouts'))} of scored
+timeouts matched. The proxy can miss chains that change their limit or wait
+longer in the queue, and can catch unrelated back-to-back jobs, so read the two
+energy columns as a range rather than one number. Your users know which
+timeouts were intentional; this does not.</p>
 
 <h2>Energy at stake is not energy saved</h2>
 <p>The last column is the energy in timed-out jobs the model would have

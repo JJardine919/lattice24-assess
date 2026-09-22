@@ -12,7 +12,7 @@ import argparse
 import sys
 
 from . import __version__
-from .core import Refusal, build_windows, check_sufficient, forward_chain, read_records, shuffle_control
+from .core import Refusal, build_windows, check_sufficient, forward_chain, mark_restart_chains, read_records, shuffle_control
 from .report import build_summary, write_outputs
 
 BANNER = f"""lattice24-assess {__version__}
@@ -37,6 +37,9 @@ def main(argv=None) -> int:
                     help="label for the report heading (not transmitted; there is nowhere to transmit it)")
     ap.add_argument("--delimiter", default=None, help="override delimiter detection")
     ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--restart-gap", type=float, default=2.0, metavar="HOURS",
+                    help="a TIMEOUT counts as a likely checkpoint-restart link if the same user "
+                         "starts a job with the same time limit within this many hours (default 2)")
     ap.add_argument("--version", action="version", version=__version__)
     args = ap.parse_args(argv)
 
@@ -46,6 +49,9 @@ def main(argv=None) -> int:
         print(f"Reading {args.export} ...", flush=True)
         jobs, stats = read_records(args.export, delimiter=args.delimiter)
         print(f"  {stats['rows_read']:,} rows, {len(jobs):,} usable completed jobs")
+        stats.update(mark_restart_chains(jobs, gap_s=args.restart_gap * 3600.0))
+        print(f"  {stats['timeouts_restart_likely']:,} of {stats['timeouts_seen']:,} timeouts look like "
+              f"checkpoint-restart links (same user, same limit, restarted within {args.restart_gap:g}h)")
 
         print("Building windows ...", flush=True)
         w = build_windows(jobs)
@@ -91,6 +97,8 @@ def main(argv=None) -> int:
     print("\n" + "-" * 68)
     if share is not None:
         print(f"Timed-out jobs hold {100*share:.1f}% of reported job energy.")
+        ex = fc["energy"]["timeout_share_excl_restart"]
+        print(f"Excluding likely checkpoint-restart chains: {100*ex:.1f}%.")
     else:
         print("No energy column in the export — energy share not measured.")
     print(f"At the 80th percentile: {100*t80['recall']:.1f}% of timed-out jobs "
