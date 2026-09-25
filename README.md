@@ -139,7 +139,13 @@ waste is therefore probably **larger** than what this reports, not smaller.
 
 ## Licence
 
-Apache-2.0. See `LICENSE`.
+Copyright (C) 2026 2396179 Alberta Inc. (Lattice24).
+
+AGPL-3.0-or-later. See `LICENSE`. You may use, study and change this tool
+freely. If you distribute it, or offer a modified version as a service, you
+must publish your changes under the same licence.
+
+Versions 0.1.0 and 0.2.0 (up to commit 54041cb) were released under Apache-2.0.
 
 ---
 
